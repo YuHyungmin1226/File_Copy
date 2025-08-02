@@ -2,7 +2,9 @@ import os
 import shutil
 import hashlib
 import sys
+import uuid
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QFileDialog, QMessageBox, QTextEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -47,6 +49,7 @@ def get_existing_hashes(folder_path):
                 hash_set.add(file_hash)
     return hash_set
 
+
 class CopyThread(QThread):
     log_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(int, int, int)
@@ -57,11 +60,16 @@ class CopyThread(QThread):
         self.output_path = output_path
 
     def run(self):
-        files = []
-        for root, _, filenames in os.walk(self.input_path):
-            for file in filenames:
-                if is_valid_file(file):
-                    files.append((root, file))
+        try:
+            files = []
+            for root, _, filenames in os.walk(self.input_path):
+                for file in filenames:
+                    if is_valid_file(file):
+                        files.append((root, file))
+        except Exception as e:
+            self.log_signal.emit(f"[오류] 파일 목록 수집 실패: {e}")
+            self.finished_signal.emit(0, 0, 0)
+            return
 
         total_files = len(files)
         if total_files == 0:
@@ -72,44 +80,70 @@ class CopyThread(QThread):
         skipped_files = 0
         hash_cache = {}
 
-        for idx, (root_dir, file) in enumerate(files, start=1):
-            source_file = os.path.join(root_dir, file)
-            file_date = get_file_modification_date(source_file)
-
-            if not file_date:
-                self.log_signal.emit(f"[{idx}/{total_files}] {source_file} → [수정일 오류] 건너뜀")
-                skipped_files += 1
-                continue
-
-            date_folder = os.path.join(self.output_path, file_date)
-            create_directory_if_not_exists(date_folder)
-
-            if date_folder not in hash_cache:
-                hash_cache[date_folder] = get_existing_hashes(date_folder)
-
-            source_hash = calculate_file_hash(source_file)
-            if source_hash in hash_cache[date_folder]:
-                self.log_signal.emit(f"[{idx}/{total_files}] {source_file} → [건너뜀: 동일 파일 존재]")
-                skipped_files += 1
-                continue
-
-            existing_files = [f for f in os.listdir(date_folder) if os.path.isfile(os.path.join(date_folder, f))]
-            next_index = len(existing_files) + 1
-            _, ext = os.path.splitext(file)
-            ext = ext.lower()
-            padded_index = str(next_index).zfill(4)
-            new_filename = f"{file_date.replace('-', '')}-{padded_index}{ext}"
-            target_file = os.path.join(date_folder, new_filename)
-
+        def copy_single_file(idx, total_files, root_dir, file):
             try:
-                shutil.copy2(source_file, target_file)
-                copied_files += 1
-                hash_cache[date_folder].add(source_hash)
-                self.log_signal.emit(f"[{idx}/{total_files}] {source_file} → {new_filename}")
-            except Exception as e:
-                skipped_files += 1
-                self.log_signal.emit(f"[{idx}/{total_files}] 오류: {source_file} → {new_filename} ({e})")
+                source_file = os.path.join(root_dir, file)
+                file_date = get_file_modification_date(source_file)
+                if not file_date:
+                    self.log_signal.emit(f"[{idx}/{total_files}] {source_file} → [수정일 오류] 건너뜀")
+                    return 'skipped'
 
+                date_folder = os.path.join(self.output_path, file_date)
+                try:
+                    create_directory_if_not_exists(date_folder)
+                except Exception as e:
+                    self.log_signal.emit(f"[{idx}/{total_files}] {source_file} → [폴더 생성 오류: {e}] 건너뜀")
+                    return 'skipped'
+
+                if date_folder not in hash_cache:
+                    hash_cache[date_folder] = get_existing_hashes(date_folder)
+
+                source_hash = calculate_file_hash(source_file)
+                if not source_hash:
+                    self.log_signal.emit(f"[{idx}/{total_files}] {source_file} → [해시 계산 오류] 건너뜀")
+                    return 'skipped'
+                if source_hash in hash_cache[date_folder]:
+                    self.log_signal.emit(f"[{idx}/{total_files}] {source_file} → [건너뜀: 동일 파일 존재]")
+                    return 'skipped'
+
+                existing_files = [f for f in os.listdir(date_folder) if os.path.isfile(os.path.join(date_folder, f))]
+                _, ext = os.path.splitext(file)
+                ext = ext.lower()
+                # 파일명 충돌 방지: 동일 파일명 존재 시 UUID 추가
+                base_name = f"{file_date.replace('-', '')}"
+                padded_index = str(len(existing_files) + 1).zfill(4)
+                new_filename = f"{base_name}-{padded_index}{ext}"
+                target_file = os.path.join(date_folder, new_filename)
+                if os.path.exists(target_file):
+                    unique_id = uuid.uuid4().hex[:8]
+                    new_filename = f"{base_name}-{padded_index}-{unique_id}{ext}"
+                    target_file = os.path.join(date_folder, new_filename)
+
+                try:
+                    shutil.copy2(source_file, target_file)
+                    hash_cache[date_folder].add(source_hash)
+                    self.log_signal.emit(f"[{idx}/{total_files}] {source_file} → {new_filename}")
+                    return 'copied'
+                except Exception as e:
+                    self.log_signal.emit(f"[{idx}/{total_files}] 오류: {source_file} → {new_filename} ({e})")
+                    return 'skipped'
+            except Exception as e:
+                self.log_signal.emit(f"[{idx}/{total_files}] 예외 발생: {file} ({e})")
+                return 'skipped'
+
+        # 멀티스레딩: ThreadPoolExecutor 사용
+        results = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_idx = {
+                executor.submit(copy_single_file, idx, total_files, root_dir, file): idx
+                for idx, (root_dir, file) in enumerate(files, start=1)
+            }
+            for future in as_completed(future_to_idx):
+                result = future.result()
+                results.append(result)
+
+        copied_files = results.count('copied')
+        skipped_files = results.count('skipped')
         self.finished_signal.emit(total_files, copied_files, skipped_files)
 
 class FileCopyApp(QWidget):
