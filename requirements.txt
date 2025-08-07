@@ -1,7 +1,7 @@
 # File_Copy 의존성 패키지
 
 # 필수 패키지
-PyQt5>=5.15.0
+PySide6
 
 # 개발/빌드용 패키지 (선택사항)
 pyinstaller>=5.0.0

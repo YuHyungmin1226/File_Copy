@@ -5,9 +5,9 @@ import sys
 import uuid
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
+from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QFileDialog, QMessageBox, QTextEdit)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PySide6.QtCore import Qt, QThread, Signal as pyqtSignal
 
 CONFIG_FILE = "last_paths.txt"
 LOG_FILE = "copy_log.txt"

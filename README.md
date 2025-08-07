@@ -1,7 +1,7 @@
 # File_Copy: 날짜별 사진/영상 정리 프로그램
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
-![PyQt5](https://img.shields.io/badge/Framework-PyQt5-orange.svg)
+![PySide6](https://img.shields.io/badge/Framework-PySide6-orange.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
@@ -41,7 +41,7 @@ python File_Copy.py
 
 ## 📦 의존성
 
-- **PyQt5**: GUI 프레임워크
+- **PySide6**: GUI 프레임워크
 - **PyInstaller** (선택사항): 실행 파일 빌드용
 
 ## 🔧 빌드 (EXE 실행 파일 만들기)
